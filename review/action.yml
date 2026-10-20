@@ -1,7 +1,8 @@
 # Keel review: the repository's team reviews a pull request and posts one comment.
 #
 # Published to OyadotAI/keel-releases at `review/action.yml` by release.yml, so it is used as
-# `OyadotAI/keel-releases/review@v<version>` and downloads the `keel` of that same release.
+# `OyadotAI/keel-releases/review@<tag>` and downloads the `keel` of that same release: a
+# `review-v*` tag (review.yml, the review alone) or an app release `v*` (release.yml).
 # Everything that decides anything is `keel review-pr`; this only installs, runs and posts.
 #
 # Use it under `pull_request`, never `pull_request_target`: the second runs the PR's code with
@@ -37,7 +38,7 @@ inputs:
   version:
     # Written in by release.yml, so a pin by SHA runs the same release a pin by tag does.
     description: The Keel release to run. Defaults to the release this action was published with.
-    default: "v0.4.14"
+    default: "review-v1"
   claude-version:
     description: The Claude Code version to install.
     default: "2.1.304"
@@ -66,7 +67,7 @@ runs:
       run: |
         set -euo pipefail
         case "$VERSION" in
-          v*) ;;
+          v*|review-v*) ;;
           *) echo "keel review: this copy of the action was not published by a release; set version (v0.4.13)." >&2; exit 1 ;;
         esac
         dir="$RUNNER_TEMP/keel-bin"
@@ -89,9 +90,10 @@ runs:
         MINUTES: ${{ inputs.minutes }}
         MODEL: ${{ inputs.model }}
         OUT: ${{ runner.temp }}/keel-review.md
+        LINES: ${{ runner.temp }}/keel-review-lines.json
       run: |
-        rm -f "$OUT"
-        args=(review-pr --out "$OUT" --minutes "$MINUTES")
+        rm -f "$OUT" "$LINES"
+        args=(review-pr --out "$OUT" --comments "$LINES" --minutes "$MINUTES")
         if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
         set +e
         keel "${args[@]}"
@@ -106,14 +108,17 @@ runs:
         echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
 
     # One comment per PR: the marker finds it, and only a bot's is edited, so a person quoting
-    # the marker does not get their comment overwritten.
+    # the marker does not get their comment overwritten. The line comments are a review of the
+    # pushed commit, and the last run's are deleted first, so a fixed finding does not linger.
     - name: Post the comment
       if: always() && steps.review.outputs.code != ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PR: ${{ github.event.pull_request.number }}
+        HEAD: ${{ github.event.pull_request.head.sha }}
         OUT: ${{ runner.temp }}/keel-review.md
+        LINES: ${{ runner.temp }}/keel-review-lines.json
       run: |
         set -euo pipefail
         [ -f "$OUT" ] || exit 0
@@ -121,9 +126,21 @@ runs:
         id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
           --jq '.[] | select(.user.type == "Bot" and (.body | startswith("<!-- keel-review -->"))) | .id' | head -1)"
         if [ -n "$id" ]; then
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT" >/dev/null
+          me="$(gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT" --jq .user.login)"
         else
-          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT" >/dev/null
+          me="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT" --jq .user.login)"
+        fi
+        # Only this token's own line comments, ending in the marker: another bot quoting the
+        # marker, or one whose comment merely mentions it, keeps its comment.
+        gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" --paginate \
+          --jq ".[] | select(.user.login == \"$me\" and (.body | endswith(\"<!-- keel-review-line -->\"))) | .id" |
+          while read -r old; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/pulls/comments/$old" >/dev/null || true; done
+        if [ -s "$LINES" ] && [ "$(jq length "$LINES")" -gt 0 ]; then
+          # A line comment GitHub refuses fails the whole review; the summary has them all anyway.
+          jq -n --arg sha "$HEAD" --slurpfile c "$LINES" \
+            '{commit_id: $sha, event: "COMMENT", body: "Keel review: findings on their lines. The verdict is in the summary comment.", comments: $c[0]}' |
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --input - >/dev/null \
+            || echo "keel review: GitHub refused the line comments; every finding is in the summary comment." >&2
         fi
 
     - name: Verdict
