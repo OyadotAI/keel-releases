@@ -1,8 +1,7 @@
 # Keel review: the repository's team reviews a pull request and posts one comment.
 #
 # Published to OyadotAI/keel-releases at `review/action.yml` by release.yml, so it is used as
-# `OyadotAI/keel-releases/review@<tag>` and downloads the `keel` of that same release: a
-# `review-v*` tag (review.yml, the review alone) or an app release `v*` (release.yml).
+# `OyadotAI/keel-releases/review@v<version>` and downloads the `keel` of that same release.
 # Everything that decides anything is `keel review-pr`; this only installs, runs and posts.
 #
 # Use it under `pull_request`, never `pull_request_target`: the second runs the PR's code with
@@ -38,7 +37,7 @@ inputs:
   version:
     # Written in by release.yml, so a pin by SHA runs the same release a pin by tag does.
     description: The Keel release to run. Defaults to the release this action was published with.
-    default: "review-v2"
+    default: "v0.4.15"
   claude-version:
     description: The Claude Code version to install.
     default: "2.1.304"
@@ -67,7 +66,7 @@ runs:
       run: |
         set -euo pipefail
         case "$VERSION" in
-          v*|review-v*) ;;
+          v*) ;;
           *) echo "keel review: this copy of the action was not published by a release; set version (v0.4.13)." >&2; exit 1 ;;
         esac
         dir="$RUNNER_TEMP/keel-bin"
@@ -126,14 +125,12 @@ runs:
         id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
           --jq '.[] | select(.user.type == "Bot" and (.body | startswith("<!-- keel-review -->"))) | .id' | head -1)"
         if [ -n "$id" ]; then
-          me="$(gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT" --jq .user.login)"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@"$OUT" >/dev/null
         else
-          me="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT" --jq .user.login)"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@"$OUT" >/dev/null
         fi
-        # Only this token's own line comments, ending in the marker: another bot quoting the
-        # marker, or one whose comment merely mentions it, keeps its comment.
         gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments" --paginate \
-          --jq ".[] | select(.user.login == \"$me\" and (.body | endswith(\"<!-- keel-review-line -->\"))) | .id" |
+          --jq '.[] | select(.user.type == "Bot" and (.body | contains("<!-- keel-review-line -->"))) | .id' |
           while read -r old; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/pulls/comments/$old" >/dev/null || true; done
         if [ -s "$LINES" ] && [ "$(jq length "$LINES")" -gt 0 ]; then
           # A line comment GitHub refuses fails the whole review; the summary has them all anyway.
