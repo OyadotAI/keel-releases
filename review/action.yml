@@ -38,7 +38,7 @@ inputs:
   version:
     # Written in by release.yml, so a pin by SHA runs the same release a pin by tag does.
     description: The Keel release to run. Defaults to the release this action was published with.
-    default: "v0.4.35"
+    default: "v0.4.37"
   claude-version:
     description: The Claude Code version to install.
     default: "2.1.304"
