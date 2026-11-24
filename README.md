@@ -1,7 +1,7 @@
 # Oya Factory
 
 Signed builds of [Oya Factory](https://github.com/OyadotAI/keel), the agentic development environment.
-The current version is **0.4.88**.
+The current version is **0.4.89**.
 
 - **macOS** (Apple silicon and Intel, macOS 13+): [Download Keel.dmg](https://github.com/OyadotAI/keel-releases/releases/latest/download/Keel.dmg)
 - **Windows** (64-bit): [Download Keel-setup.exe](https://github.com/OyadotAI/keel-releases/releases/latest/download/Keel-setup.exe)
